@@ -3,4 +3,7 @@ A matlab 3D terrain mesh generation tool. Approximates a height field with a Del
 
 Delatin is a port of Michael Fogleman's hmm (C++), which is in turn based on the paper Fast Polygonal Approximation of Terrains and Height Fields (1995) by Michael Garland and Paul Heckbert.
 
-Based on mapbox/delatin(https://github.com/mapbox/delatin) and a priority queue implementation of Andrew Woodward (andrewmwoodward/PriorityQueueMATLAB, https://github.com/andrewmwoodward/PriorityQueueMATLAB)
+![Raster2MeshGif](https://github.com/AmirGoldental/Matlab-Delatin/blob/main/Raster2Mesh.gif)
+
+
+Based on [mapbox/delatin](https://github.com/mapbox/delatin) and a priority queue implementation of Andrew Woodward [andrewmwoodward/PriorityQueueMATLAB](https://github.com/andrewmwoodward/PriorityQueueMATLAB).
