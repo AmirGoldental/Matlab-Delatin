@@ -50,7 +50,7 @@ flush();
 StepIdx = 0;
 if ToPlot
     Hndl = figure;
-    Hndl.Position = [560.6000 145 804.8000 439.2000];
+    Hndl.Position = [560.6000 145 804.8000 439.2000]
     subplot(1,2,1)
     surf(this.data(1:10:end,1:10:end))
     subplot(1,2,2)    
@@ -60,16 +60,21 @@ while getMaxError() > MaxError
     disp(StepIdx)
     refine();
     if ToPlot
-        TriMesh = createMesh();
+        TriMesh = create3DMesh();
         trisurf(TriMesh);
         drawnow;
     end
 end
-TriMesh = createMesh();
-    function TriMesh = createMesh()
+TriMesh = create3DMesh();
+    function TriMesh = create3DMesh()
         Points = 1 + reshape(this.coords,2,[])';
         ConMat = 1+reshape(this.triangles,3,[])';
         Points(:,end+1) = this.data(sub2ind(size(this.data), Points(:,2), Points(:,1)));
+        TriMesh = triangulation(ConMat, Points);
+    end
+    function TriMesh = create2DMesh()
+        Points = 1 + reshape(this.coords,2,[])';
+        ConMat = 1 + reshape(this.triangles,3,[])';
         TriMesh = triangulation(ConMat, Points);
     end
     function res = getMaxError()
@@ -106,7 +111,30 @@ TriMesh = createMesh();
     end
 
 % rasterize a triangle, find its max error, and queue it for processing
-    function findCandidate(p0x, p0y, p1x, p1y, p2x, p2y, t)
+    function findCandidateML(p0x, p0y, p1x, p1y, p2x, p2y, t)
+        minX = min([p0x, p1x, p2x]);
+        minY = min([p0y, p1y, p2y]);
+        maxX = max([p0x, p1x, p2x]);
+        maxY = max([p0y, p1y, p2y]);
+        [Xs, Ys] = meshgrid(minX:maxX,minY:maxY);
+        B = cartesianToBarycentric(create2DMesh(), repmat(t+1,numel(Xs),1), [Xs(:), Ys(:)]);
+        C = barycentricToCartesian(create3DMesh(), repmat(t+1,numel(Xs),1), B);
+        H = this.data(sub2ind(size(this.data), Ys(:)+1, Xs(:)+1));
+        [maxError, MaxIdx] = max(abs(H-C(:,3)));
+        [Y,X] = ind2sub(size(this.data), MaxIdx);
+        Y = Y - 1;
+        X = X - 1;
+        rms = sum((H-C(:,3)).^2);
+        % update triangle metadata
+        this.candidates(1 + 2 * t) = X;
+        this.candidates(1 + 2 * t + 1) = Y;
+        this.rms(1 + t) = rms;
+        
+        % add triangle to priority queue
+        this.queue.insert([-maxError, t, rms]);
+    end
+
+function findCandidate(p0x, p0y, p1x, p1y, p2x, p2y, t)
         % triangle bounding box
         minX = min([p0x, p1x, p2x]);
         minY = min([p0y, p1y, p2y]);
