@@ -50,7 +50,7 @@ flush();
 StepIdx = 0;
 if ToPlot
     Hndl = figure;
-    Hndl.Position = [560.6000 145 804.8000 439.2000]
+    Hndl.Position = [560.6000 145 804.8000 439.2000];
     subplot(1,2,1)
     surf(this.data(1:10:end,1:10:end))
     subplot(1,2,2)    
@@ -111,19 +111,22 @@ TriMesh = create3DMesh();
     end
 
 % rasterize a triangle, find its max error, and queue it for processing
-    function findCandidateML(p0x, p0y, p1x, p1y, p2x, p2y, t)
+    function findCandidate(p0x, p0y, p1x, p1y, p2x, p2y, t)
         minX = min([p0x, p1x, p2x]);
         minY = min([p0y, p1y, p2y]);
         maxX = max([p0x, p1x, p2x]);
         maxY = max([p0y, p1y, p2y]);
         [Xs, Ys] = meshgrid(minX:maxX,minY:maxY);
         B = cartesianToBarycentric(create2DMesh(), repmat(t+1,numel(Xs),1), [Xs(:), Ys(:)]);
+        Outside = any(B<0,2);
+        Xs(Outside) = [];
+        Ys(Outside) = [];
+        B(Outside,:) = [];
         C = barycentricToCartesian(create3DMesh(), repmat(t+1,numel(Xs),1), B);
         H = this.data(sub2ind(size(this.data), Ys(:)+1, Xs(:)+1));
         [maxError, MaxIdx] = max(abs(H-C(:,3)));
-        [Y,X] = ind2sub(size(this.data), MaxIdx);
-        Y = Y - 1;
-        X = X - 1;
+        Y = Ys(MaxIdx);
+        X = Xs(MaxIdx);
         rms = sum((H-C(:,3)).^2);
         % update triangle metadata
         this.candidates(1 + 2 * t) = X;
@@ -132,96 +135,9 @@ TriMesh = create3DMesh();
         
         % add triangle to priority queue
         this.queue.insert([-maxError, t, rms]);
+        %disp(['X: ' num2str(X) ', Y: ' num2str(Y) ' T: ' num2str(t) ', maxError: ' num2str(maxError)])
     end
 
-function findCandidate(p0x, p0y, p1x, p1y, p2x, p2y, t)
-        % triangle bounding box
-        minX = min([p0x, p1x, p2x]);
-        minY = min([p0y, p1y, p2y]);
-        maxX = max([p0x, p1x, p2x]);
-        maxY = max([p0y, p1y, p2y]);
-        
-        % forward differencing variables
-        w00 = orient(p1x, p1y, p2x, p2y, minX, minY);
-        w01 = orient(p2x, p2y, p0x, p0y, minX, minY);
-        w02 = orient(p0x, p0y, p1x, p1y, minX, minY);
-        a01 = p1y - p0y;
-        b01 = p0x - p1x;
-        a12 = p2y - p1y;
-        b12 = p1x - p2x;
-        a20 = p0y - p2y;
-        b20 = p2x - p0x;
-        
-        % pre-multiplied z values at vertices
-        a = orient(p0x, p0y, p1x, p1y, p2x, p2y);
-        z0 = heightAt(p0x, p0y) / a;
-        z1 = heightAt(p1x, p1y) / a;
-        z2 = heightAt(p2x, p2y) / a;
-        
-        % iterate over pixels in bounding box
-        maxError = 0;
-        mx = 0;
-        my = 0;
-        rms = 0;
-        for y = minY:maxY
-            % compute starting offset
-            dx = 0;
-            if (w00 < 0 && a12 ~= 0)
-                dx = max([dx, floor(-w00 / a12)]);
-            end
-            if (w01 < 0 && a20 ~= 0)
-                dx = max([dx, floor(-w01 / a20)]);
-            end
-            if (w02 < 0 && a01 ~= 0)
-                dx = max([dx, floor(-w02 / a01)]);
-            end
-            
-            w0 = w00 + a12 * dx;
-            w1 = w01 + a20 * dx;
-            w2 = w02 + a01 * dx;
-            
-            wasInside = false;
-            
-            for x = (minX + dx):maxX
-                % check if inside triangle
-                if (w0 >= 0 && w1 >= 0 && w2 >= 0)
-                    wasInside = true;
-                    
-                    % compute z using barycentric coordinates
-                    z = z0 * w0 + z1 * w1 + z2 * w2;
-                    dz = abs(z - heightAt(x, y));
-                    rms = rms + dz * dz;
-                    if (dz > maxError)
-                        maxError = dz;
-                        mx = x;
-                        my = y;
-                    end
-                elseif (wasInside)
-                    break;
-                end
-                
-                w0 = w0 + a12;
-                w1 = w1 + a20;
-                w2 = w2 + a01;
-            end
-            
-            w00 = w00 + b12;
-            w01 = w01 + b20;
-            w02 = w02 + b01;
-        end
-        
-        if (mx == p0x && my == p0y || mx == p1x && my == p1y || mx == p2x && my == p2y)
-            maxError = 0;
-        end
-        
-        % update triangle metadata
-        this.candidates(1 + 2 * t) = mx;
-        this.candidates(1 + 2 * t + 1) = my;
-        this.rms(1 + t) = rms;
-        
-        % add triangle to priority queue
-        this.queue.insert([-maxError, t, rms]);
-    end
 
 % process the next triangle in the queue, splitting it with a new point
     function step()
