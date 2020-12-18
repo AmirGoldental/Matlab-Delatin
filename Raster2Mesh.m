@@ -18,33 +18,39 @@ if ~exist('MaxError', 'var')
 end
 
 this = struct();
-this.data = Raster;
-this.width = size(Raster,2);
-this.height = size(Raster,1);
+TriMesh.ConList = []; % PointIdxs = TriMesh.ConList(TriangleIdx, 1:3)
+TriMesh.Points = []; % PointCoordinates = TriMesh.Points(PointIdx, 1:2)
+TriMesh.TriangleEgdes = []; % EdgeIdxs = TriMesh.TriangleEgdes(TriangleIdx, 1:3) % 1.ab, 2.bc, 3.cd
+Meta.Candidates = []; % PointCoordinates = Meta.Candidates(TriangleIdx, 1:2)
+Edges.TriangleIdxs = []; % TriangleIdxs = Edges.TriangleIdxs(EdgeIdx, 1:2)
+Edges.PointIdxs = []; % PointIdxs = Edges.PointIdxs(EdgeIdx, 1:2)
+
 this.coords = []; % vertex coordinates (x, y)
 this.triangles = []; % mesh triangle indices
 
 % additional triangle data
 this.halfedges = [];
 this.candidates = [];
-this.queueIndices = [];
 this.queue = PriorityQueue();
-this.pending = []; % triangles pending addition to queue
-this.pendingLen = 0;
 
 this.rmsSum = 0;
+TriMesh.Points = ...
+    [1              ,1             ; ...
+     size(Raster,2) ,1             ; ...
+     1              ,size(Raster,1); ...
+     size(Raster,2) ,size(Raster,1)];
+TriMesh.ConList = [1,2,4; 1,3,4];
+TriMesh.TriangleEgdes = [1,2,3; 1,4,5];
+Edges.TriangleIdxs = [1, 2;nan(4,2)];
+Edges.PointIdxs = [...
+    1, 4; ...
+    1, 2; ...
+    4, 2; ...
+    1, 3; ...
+    3, 4];
 
-x1 = this.width - 1;
-y1 = this.height - 1;
-point0 = addPoint(0, 0);
-point1 = addPoint(x1, 0);
-point2 = addPoint(0, y1);
-point3 = addPoint(x1, y1);
-
-% add initial two triangles
-Triangle0 = addTriangle(point3, point0, point2, -1, -1, -1);
-addTriangle(point0, point3, point1, Triangle0, -1, -1);
-flush();
+AddTriangleToQ(1);
+AddTriangleToQ(2);
 
 % refine the mesh until its maximum error gets below the given one
 StepIdx = 0;
@@ -52,13 +58,13 @@ if ToPlot
     Hndl = figure;
     Hndl.Position = [560.6000 145 804.8000 439.2000];
     subplot(1,2,1)
-    surf(this.data(1:10:end,1:10:end))
+    surf(Raster(1:10:end,1:10:end))
     subplot(1,2,2)    
 end
 while getMaxError() > MaxError
     StepIdx = StepIdx + 1;
     disp(StepIdx)
-    refine();
+    Step();
     if ToPlot
         TriMesh = create3DMesh();
         trisurf(TriMesh);
@@ -66,204 +72,262 @@ while getMaxError() > MaxError
     end
 end
 TriMesh = create3DMesh();
-    function TriMesh = create3DMesh()
-        Points = 1 + reshape(this.coords,2,[])';
+    function TriMesh3D = create3DMesh()
+        Points = TriMesh.Points;
         ConMat = 1+reshape(this.triangles,3,[])';
-        Points(:,end+1) = this.data(sub2ind(size(this.data), Points(:,2), Points(:,1)));
-        TriMesh = triangulation(ConMat, Points);
+        Points(:,end+1) = Raster(sub2ind(size(Raster), TriMesh.Points(:,2), TriMesh.Points(:,1)));
+        TriMesh3D = triangulation(TriMesh.ConList, Points);
     end
-    function TriMesh = create2DMesh()
-        Points = 1 + reshape(this.coords,2,[])';
-        ConMat = 1 + reshape(this.triangles,3,[])';
-        TriMesh = triangulation(ConMat, Points);
+    function TriMesh2D = create2DMesh()
+        TriMesh2D = triangulation(TriMesh.ConList, TriMesh.Points);
     end
     function res = getMaxError()
         res = -this.queue.peek();
         res = res(1);
     end
-        
-
-% refine the mesh with a single point
-    function refine()
-        step();
-        flush();
-    end
-
-% height value at a given position
-    function res = heightAt(x, y)
-        res = this.data(y+1,x+1);
-    end
-
-% rasterize and queue all triangles that got added or updated in step
-    function flush()
-        coords = this.coords;
-        for i = 1:length(this.pending)
-            t = this.pending(i);
-            % rasterize triangle to find maximum pixel error
-            a = 2 * this.triangles(1 + t * 3 + 0);
-            b = 2 * this.triangles(1 + t * 3 + 1);
-            c = 2 * this.triangles(1 + t * 3 + 2);
-            findCandidate(coords(1 + a), coords(1 + a + 1),...
-                coords(1 + b), coords(1 + b + 1),...
-                coords(1 + c), coords(1 + c + 1), t);
-        end
-        this.pendingLen = 0;
-    end
 
 % rasterize a triangle, find its max error, and queue it for processing
-    function findCandidate(p0x, p0y, p1x, p1y, p2x, p2y, t)
-        minX = min([p0x, p1x, p2x]);
-        minY = min([p0y, p1y, p2y]);
-        maxX = max([p0x, p1x, p2x]);
-        maxY = max([p0y, p1y, p2y]);
-        [Xs, Ys] = meshgrid(minX:maxX,minY:maxY);
-        B = cartesianToBarycentric(create2DMesh(), repmat(t+1,numel(Xs),1), [Xs(:), Ys(:)]);
+    function AddTriangleToQ(TriangleIdx)
+        PointIdxs = TriMesh.ConList(TriangleIdx, :);
+        PointCoordinates = TriMesh.Points(PointIdxs, :);
+        [Xs, Ys] = meshgrid(...
+            floor(min(PointCoordinates(:,1))):ceil(max(PointCoordinates(:,1))),...
+            floor(min(PointCoordinates(:,2))):ceil(max(PointCoordinates(:,2))));
+        B = cartesianToBarycentric(create2DMesh(), repmat(TriangleIdx, numel(Xs), 1), [Xs(:), Ys(:)]);
         Outside = any(B<0,2);
         Xs(Outside) = [];
         Ys(Outside) = [];
         B(Outside,:) = [];
-        C = barycentricToCartesian(create3DMesh(), repmat(t+1,numel(Xs),1), B);
-        H = this.data(sub2ind(size(this.data), Ys(:)+1, Xs(:)+1));
+        C = barycentricToCartesian(create3DMesh(), repmat(TriangleIdx, numel(Xs), 1), B);
+        H = Raster(sub2ind(size(Raster), Ys(:), Xs(:)));
         [maxError, MaxIdx] = max(abs(H-C(:,3)));
         Y = Ys(MaxIdx);
         X = Xs(MaxIdx);
         rms = sum((H-C(:,3)).^2);
+        
         % update triangle metadata
-        this.candidates(1 + 2 * t) = X;
-        this.candidates(1 + 2 * t + 1) = Y;
-        this.rms(1 + t) = rms;
+        Meta.Candidates(TriangleIdx,:) = [X,Y];
+        this.rms(TriangleIdx) = rms;
         
         % add triangle to priority queue
-        this.queue.insert([-maxError, t, rms]);
+        this.queue.insert([-maxError, TriangleIdx, rms]);
         %disp(['X: ' num2str(X) ', Y: ' num2str(Y) ' T: ' num2str(t) ', maxError: ' num2str(maxError)])
     end
 
 
-% process the next triangle in the queue, splitting it with a new point
-    function step()
-        % pop triangle with highest error from priority queue
-        t = this.queue.remove();
-        t = t(2);
+    function Step()
+        % pop triangle with highest error from priority queue and split it
+        T = this.queue.remove();
+        TriangleIdx = T(2);
         
-        e0 = t * 3 + 0;
-        e1 = t * 3 + 1;
-        e2 = t * 3 + 2;
+        P1_Idx = TriMesh.ConList(TriangleIdx, 1);
+        P2_Idx = TriMesh.ConList(TriangleIdx, 2);
+        P3_Idx = TriMesh.ConList(TriangleIdx, 3);
         
-        p0 = this.triangles(1 + e0);
-        p1 = this.triangles(1 + e1);
-        p2 = this.triangles(1 + e2);
+        P1_Coor = TriMesh.Points(P1_Idx, :);
+        P2_Coor = TriMesh.Points(P2_Idx, :);
+        P3_Coor = TriMesh.Points(P3_Idx, :);
+        P_Coor = Meta.Candidates(TriangleIdx, 1:2);
         
-        ax = this.coords(1 + 2 * p0);
-        ay = this.coords(1 + 2 * p0 + 1);
-        bx = this.coords(1 + 2 * p1);
-        by = this.coords(1 + 2 * p1 + 1);
-        cx = this.coords(1 + 2 * p2);
-        cy = this.coords(1 + 2 * p2 + 1);
-        px = this.candidates(1 + 2 * t);
-        py = this.candidates(1 + 2 * t + 1);
-        
-        pn = addPoint(px, py);
-        
-        if (orient(ax, ay, bx, by, px, py) == 0)
-            handleCollinear(pn, e0);
-            
-        elseif (orient(bx, by, cx, cy, px, py) == 0)
-            handleCollinear(pn, e1);
-            
-        elseif (orient(cx, cy, ax, ay, px, py) == 0)
-            handleCollinear(pn, e2);
-            
+        if IsColinear(P1_Coor, P2_Coor, P_Coor)
+            EdgeIdx = GetEdgeIdx(TriangleIdx, P1_Coor, P2_Coor);
+            SecondTriangleIdx = setdiff(Edges.Triangles(EdgeIdx,:), TriangleIdx);
+            this.queue.remove(SecondTriangleIdx);
+            NewTriangles = SplitEdgeToTwo(EdgeIdx, P_Coor);
+        elseif IsColinear(P2_Coor, P3_Coor, P_Coor)
+            EdgeIdx = GetEdgeIdx(TriangleIdx, P3_Coor, P2_Coor);
+            SecondTriangleIdx = setdiff(Edges.Triangles(EdgeIdx,:), TriangleIdx);
+            this.queue.remove(SecondTriangleIdx);
+            NewTriangles = SplitEdgeToTwo(EdgeIdx, P_Coor);            
+        elseif IsColinear(P3_Coor, P1_Coor, P_Coor)
+            EdgeIdx = GetEdgeIdx(TriangleIdx, P3_Coor, P1_Coor);
+            SecondTriangleIdx = setdiff(Edges.Triangles(EdgeIdx,:), TriangleIdx);
+            this.queue.remove(SecondTriangleIdx);
+            NewTriangles = SplitEdgeToTwo(EdgeIdx, P_Coor);
         else
-            h0 = this.halfedges(1 + e0);
-            h1 = this.halfedges(1 + e1);
-            h2 = this.halfedges(1 + e2);
+            NewTriangles = SplitTriangleToThree(TriangleIdx, P_Coor);
+        end
+        for TriangleIdx = NewTriangles(:)'
+            AddTriangleToQ(TriangleIdx);
+        end
+    end
+    
+    function EdgeIdx = GetEdgeIdx(TriangleIdx, PointA_Idx, PointB_Idx)
+        TriangleEdges = TriMesh.TriangleEgdes(TriangleIdx, :);
+        for EdgeIdxInTriangle = 1:3
+            TempEdgeIdx = TriangleEdges(EdgeIdxInTriangle);
+            if all(sort(Edges.PointIdxs(TempEdgeIdx,:)) == sort([PointA_Idx, PointB_Idx]))
+                EdgeIdx = TempEdgeIdx;
+                return
+            end
+        end
+        error('Unexpected error')
+    end
+
+    function NewTriangles = SplitTriangleToThree(ABC_Idx, P_Coor)
+        P_Idx = size(TriMesh.Points, 1) + 1;
+        TriMesh.Points(P_Idx,:) = P_Coor; 
+        
+        ABP_Idx = ABC_Idx;
+        BCP_Idx = size(TriMesh.ConList, 1) + 1;
+        CAP_Idx = size(TriMesh.ConList, 1) + 2;
+        A_Idx = TriMesh.ConList(ABC_Idx, 1);
+        B_Idx = TriMesh.ConList(ABC_Idx, 2);
+        C_Idx = TriMesh.ConList(ABC_Idx, 3);
+       
+        AB_Idx = GetEdgeIdx(ABC_Idx, A_Idx, B_Idx);
+        BC_Idx = GetEdgeIdx(ABC_Idx, B_Idx, C_Idx);
+        CA_Idx = GetEdgeIdx(ABC_Idx, A_Idx, C_Idx);
+
+        TriMesh.ConList(ABP_Idx, 3) = P_Idx;
+        TriMesh.ConList(BCP_Idx, :) = [B_Idx, C_Idx, P_Idx];
+        TriMesh.ConList(CAP_Idx, :) = [C_Idx, A_Idx, P_Idx];
+
+        Edges.TriangleIdxs(AB_Idx, Edges.TriangleIdxs(AB_Idx,:)==ABC_Idx) = ABP_Idx;
+        Edges.TriangleIdxs(BC_Idx, Edges.TriangleIdxs(BC_Idx,:)==ABC_Idx) = BCP_Idx;
+        Edges.TriangleIdxs(CA_Idx, Edges.TriangleIdxs(CA_Idx,:)==ABC_Idx) = CAP_Idx;
+        
+        EdgeAP = size(Edges.PointIdxs,1) + 1;
+        EdgeBP = size(Edges.PointIdxs,1) + 2;
+        EdgeCP = size(Edges.PointIdxs,1) + 3;
+        Edges.TriangleIdxs(EdgeAP, :) = [ABP_Idx, ABC_Idx];
+        Edges.TriangleIdxs(EdgeBP, :) = [BCP_Idx, ABC_Idx];
+        Edges.TriangleIdxs(EdgeCP, :) = [CAP_Idx, ABC_Idx];
+        Edges.PointIdxs(EdgeAP, :) = [A_Idx, P_Idx];
+        Edges.PointIdxs(EdgeBP, :) = [B_Idx, P_Idx];
+        Edges.PointIdxs(EdgeCP, :) = [C_Idx, P_Idx];
+        LegalizeEdge(AB_Idx)
+        LegalizeEdge(BC_Idx)
+        LegalizeEdge(CA_Idx)
+        NewTriangles = [ABP_Idx, BCP_Idx, CAP_Idx];
+    end
+
+    function NewTriangles = SplitEdgeToTwo(EgdeIdx, NewPoint)
+        % NewPoint = [x,y]
+        %           A                     A
+        %          /||\                  /||\
+        %         / || \                / || \
+        %        /  ||  \              /  ||  \
+        %       / T1||T2 \    Split   / T1||T2 \
+        %     P1\   ||   /P2   =>   P1\---B----/P2
+        %        \  ||  /              \T3||T4/
+        %     T1N \ || / T2N        T1N \ || / T2N
+        %          \||/                  \||/
+        %           B                     C
+        
+        AB_Idx = EgdeIdx;
+        T1_Idx = Edges.TriangleIdxs(AB_Idx, 1);
+        T2_Idx = Edges.TriangleIdxs(AB_Idx, 2);
+        A_Idx = Edges.PointIdxs(AB_Idx, 1);
+        B_Idx = Edges.PointIdxs(AB_Idx, 2);
+        
+        % Create a new point (C) where B is now
+        TriMesh.Points(end+1,:) = TriMesh.Points(B_Idx,:);
+        C_Idx = size(TriMesh.Points,1);
+        
+        % Move B
+        TriMesh.Points(B_Idx,:) = NewPoint;
+        
+        % Create the new edge BC
+        Edges.PointIdxs(end+1,:) = [B_Idx, C_Idx];
+        BC_Idx = size(Edges.PointIdxs,1);
+        
+        if ~isnan(T1_Idx)
+            % Find P1, B-P1 Edge, T1N
+            P1_Idx = setdiff(TriMesh.ConList(T1_Idx,:), [A_Idx, B_Idx]);
+            AP1_Idx = GetEdgeIdx(T1, A_Idx, P1_Idx);
+            BP1_Idx = GetEdgeIdx(T1, B_Idx, P1_Idx);
+            T1N_Idx = setdiff(Edges.TriangleIdxs(BP1_Idx,:), T1);
             
-            t0 = addTriangle(p0, p1, pn, h0, -1, -1, e0);
-            t1 = addTriangle(p1, p2, pn, h1, -1, t0 + 1);
-            t2 = addTriangle(p2, p0, pn, h2, t0 + 2, t1 + 1);
+            % Create new triangle
+            TriMesh.ConList(end+1,:) = [P1_Idx, B_Idx, C_Idx];
+            T3_Idx = size(TriMesh.ConList,1);
+           
+            % Update B-P1 Edge
+            Edges.TriangleIdxs(BP1_Idx, Edges.TriangleIdxs(BP1_Idx,:)==T1N_Idx) = T3_Idx;
             
-            legalize(t0);
-            legalize(t1);
-            legalize(t2);
+            % Create C-P1 Edge
+            Edges.TriangleIdxs(end+1, :) = [T3_Idx, T1N_Idx];
+            CP1_Idx = size(Edges.TriangleIdxs,1);
+            Edges.Points(CP1_Idx, :) = [C_Idx, P1_Idx];
+            
+            % Update TriangleEgdes
+            TriMesh.TriangleEgdes(T1N_Idx, TriMesh.TriangleEgdes(T1N_Idx, :)==BP1_Idx) = CP1_Idx;
+            TriMesh.TriangleEgdes(T3_Idx, :) = [CP1_Idx, BP1_Idx, BC_Idx];
+        else
+            T3_Idx = nan;
+        end
+        if ~isnan(T2_Idx)
+            % Find P2, B-P2 Edge, T2N
+            P2_Idx = setdiff(TriMesh.ConList(T2_Idx,:), [A_Idx, B_Idx]);
+            AP2_Idx = GetEdgeIdx(T2, A_Idx, P2_Idx);
+            BP2_Idx = GetEdgeIdx(T2, B_Idx, P2_Idx);
+            T2N_Idx = setdiff(Edges.TriangleIdxs(BP2_Idx,:), T1);
+            
+            % Create new triangle
+            TriMesh.ConList(end+1,:) = [P2_Idx, B_Idx, C_Idx];
+            T4_Idx = size(TriMesh.ConList,1);
+           
+            % Update B-P2 Edge
+            Edges.TriangleIdxs(BP2_Idx, Edges.TriangleIdxs(BP2_Idx,:)==T2N_Idx) = T4_Idx;
+            
+            % Create C-P2 Edge
+            Edges.TriangleIdxs(end+1, :) = [T4_Idx, T2N_Idx];
+            CP2_Idx = size(Edges.TriangleIdxs,1);
+            Edges.Points(CP2_Idx, :) = [C_Idx, P2_Idx];
+            
+            % Update TriangleEgdes
+            TriMesh.TriangleEgdes(T2N_Idx, TriMesh.TriangleEgdes(T2N_Idx, :)==BP2_Idx) = CP2_Idx;
+            TriMesh.TriangleEgdes(T4_Idx, :) = [CP2_Idx, BP2_Idx, BC_Idx];
+        else
+            T4_Idx = nan;
+        end
+        
+        % Update B-C Edge
+        Edges.TriangleIdxs(BC_Idx, :) = [T3_Idx, T4_Idx];
+        NewTriangles = [T1_Idx, T2_Idx, T3_Idx, T4_Idx];
+        NewTriangles(isnan(NewTriangles)) = [];
+        % Todo: legalize all edges
+        if ~isnan(T1_Idx)
+            LegalizeEdge(AP1_Idx)
+            LegalizeEdge(CP1_Idx)
+        end
+        if ~isnan(T2_Idx)
+            LegalizeEdge(AP2_Idx)
+            LegalizeEdge(CP2_Idx)
         end
     end
 
-% add coordinates for a new vertex
-    function i = addPoint(x, y)
-        i = round(length(this.coords)/2);
-        this.coords(end+(1:2)) = [x, y];
-    end
-
-% add or update a triangle in the mesh
-    function e = addTriangle(a, b, c, ab, bc, ca, e)
-        if ~exist('e', 'var')
-            e = length(this.triangles);
-        end
-        t = e/3; % new triangle index
-        
-        % add triangle vertices
-        this.triangles(1 + e + 0) = a;
-        this.triangles(1 + e + 1) = b;
-        this.triangles(1 + e + 2) = c;
-        
-        % add triangle halfedges
-        this.halfedges(1 + e + 0) = ab;
-        this.halfedges(1 + e + 1) = bc;
-        this.halfedges(1 + e + 2) = ca;
-        
-        % link neighboring halfedges
-        if (ab >= 0)
-            this.halfedges(1 + ab) = e + 0;
-        end
-        if (bc >= 0)
-            this.halfedges(1 + bc) = e + 1;
-        end
-        if (ca >= 0)
-            this.halfedges(1 + ca) = e + 2;
-        end
-        
-        % init triangle metadata
-        this.candidates(1 + 2 * t + 0) = 0;
-        this.candidates(1 + 2 * t + 1) = 0;
-        this.queueIndices(1 + t) = -1;
-        this.rms(1 + t) = 0;
-        
-        % add triangle to pending queue for later rasterization
-        this.pending(1 + this.pendingLen) = t;
-        this.pendingLen = this.pendingLen + 1;
-        
-    end
-
-    function legalize(a)
+    function LegalizeEdge(EdgeIdx)
         % if the pair of triangles doesn't satisfy the Delaunay condition
         % (p1 is inside the circumcircle of (p0, pl, pr)), flip them,
         % then do the same check/flip recursively for the new pair of triangles
         %
-        %           pl                    pl
-        %          /||\                  /  \
-        %       al/ || \bl            al/    \a
-        %        /  ||  \              /      \
-        %       /  a||b  \    flip    /ar\
-        %     p0\   ||   /p1   =>   p0\---bl---/p1
-        %        \  ||  /              \      /
-        %       ar\ || /br             b\    /br
-        %          \||/                  \  /
-        %           pr                    pr
-        
-        b = this.halfedges(1 + a);
+        %           U                     U
+        %          /|\                  /  \
+        %      TUL/ | \TUR          TUL/    \TUR
+        %        /  |  \              /      \
+        %       /   |   \    flip    /   T1   \
+        %      L\ T1|T2 /R    =>    L\--------/R 
+        %        \  |  /              \  T2  /
+        %      TLD\ | /TRD          TLD\    /TRD
+        %          \|/                  \  /
+        %           D                     D 
+        return
+        b = this.halfedges(1 + EdgeIdx);
         
         if (b < 0)
             return;
         end
         
-        a0 = a - mod(a, 3);
+        a0 = EdgeIdx - mod(EdgeIdx, 3);
         b0 = b - mod(b, 3);
-        al = a0 + mod(a + 1, 3);
-        ar = a0 + mod(a + 2, 3);
+        al = a0 + mod(EdgeIdx + 1, 3);
+        ar = a0 + mod(EdgeIdx + 2, 3);
         bl = b0 + mod(b + 2, 3);
         br = b0 + mod(b + 1, 3);
         p0 = this.triangles(1 + ar);
-        pr = this.triangles(1 + a);
+        pr = this.triangles(1 + EdgeIdx);
         pl = this.triangles(1 + al);
         p1 = this.triangles(1 + bl);
         coords = this.coords;
@@ -287,8 +351,8 @@ TriMesh = create3DMesh();
         t0 = addTriangle(p0, p1, pl, -1, hbl, hal, a0);
         t1 = addTriangle(p1, p0, pr, t0, har, hbr, b0);
         
-        legalize(t0 + 1);
-        legalize(t1 + 2);
+        LegalizeEdge(t0 + 1);
+        LegalizeEdge(t1 + 2);
     end
 
 % handle a case where new vertex is on the edge of a triangle
@@ -307,8 +371,8 @@ TriMesh = create3DMesh();
         if (b < 0)
             t0 = addTriangle(pn, p0, pr, -1, har, -1, a0);
             t1 = addTriangle(p0, pn, pl, t0, -1, hal);
-            legalize(t0 + 1);
-            legalize(t1 + 2);
+            LegalizeEdge(t0 + 1);
+            LegalizeEdge(t1 + 2);
             return;
         end
         
@@ -326,10 +390,10 @@ TriMesh = create3DMesh();
         t2 = addTriangle(p1, pl, pn, hbl, -1, t1 + 1);
         t3 = addTriangle(pl, p0, pn, hal, t0 + 2, t2 + 1);
         
-        legalize(t0);
-        legalize(t1);
-        legalize(t2);
-        legalize(t3);
+        LegalizeEdge(t0);
+        LegalizeEdge(t1);
+        LegalizeEdge(t2);
+        LegalizeEdge(t3);
     end
 
     function res = inCircle(ax, ay, bx, by, cx, cy, px, py)
@@ -351,4 +415,12 @@ TriMesh = create3DMesh();
         res = (bx - cx) * (ay - cy) - (by - cy) * (ax - cx);
     end
 
+
+
+end
+
+function res = IsColinear(a, b, c)
+bc = b(:) - c(:);
+ac = a(:) - c(:);
+res = all(cross([bc;0], [ac;0]) == 0);
 end
