@@ -34,6 +34,7 @@ classdef EdgesClass < handle
         function TriangleIdxs = GetEdge(obj, Point1, Point2)
             Points = sort([Point1, Point2]);
             TriangleIdxs = [obj.EdgesT1(Points(1), Points(2)), obj.EdgesT2(Points(1), Points(2))];
+            TriangleIdxs(TriangleIdxs==0) = nan;
         end
         function N = numel(obj)
             N = nnz(obj.EdgesT1);
