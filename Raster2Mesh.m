@@ -18,12 +18,10 @@ if ~exist('MaxError', 'var')
 end
 
 this = struct();
-TriMesh.ConList = []; % PointIdxs = TriMesh.ConList(TriangleIdx, 1:3)
+TriMesh.ConnectivityList = []; % PointIdxs = TriMesh.ConnectivityList(TriangleIdx, 1:3)
 TriMesh.Points = []; % PointCoordinates = TriMesh.Points(PointIdx, 1:2)
-TriMesh.TriangleEgdes = []; % EdgeIdxs = TriMesh.TriangleEgdes(TriangleIdx, 1:3) % 1.ab, 2.bc, 3.cd
 Meta.Candidates = []; % PointCoordinates = Meta.Candidates(TriangleIdx, 1:2)
-Edges.TriangleIdxs = []; % TriangleIdxs = Edges.TriangleIdxs(EdgeIdx, 1:2)
-Edges.PointIdxs = []; % PointIdxs = Edges.PointIdxs(EdgeIdx, 1:2)
+Edges = EdgesClass();
 
 this.coords = []; % vertex coordinates (x, y)
 this.triangles = []; % mesh triangle indices
@@ -39,15 +37,12 @@ TriMesh.Points = ...
      size(Raster,2) ,1             ; ...
      1              ,size(Raster,1); ...
      size(Raster,2) ,size(Raster,1)];
-TriMesh.ConList = [1,2,4; 1,3,4];
-TriMesh.TriangleEgdes = [1,2,3; 1,4,5];
-Edges.TriangleIdxs = [1, 2;nan(4,2)];
-Edges.PointIdxs = [...
-    1, 4; ...
-    1, 2; ...
-    4, 2; ...
-    1, 3; ...
-    3, 4];
+TriMesh.ConnectivityList = [1,2,4; 1,3,4];
+Edges.SetEdge(1, 4, [1,2]);
+Edges.SetEdge(1, 2, [1,nan]);
+Edges.SetEdge(4, 2, [1,nan]);
+Edges.SetEdge(1, 3, [2,nan]);
+Edges.SetEdge(3, 4, [2,nan]);
 
 AddTriangleToQ(1);
 AddTriangleToQ(2);
@@ -61,26 +56,77 @@ if ToPlot
     surf(Raster(1:10:end,1:10:end))
     subplot(1,2,2)    
 end
+
+% Test
+close all
+figure; DegbugPlot()
+SplitEdgeToTwo(1,4,[500,250])
+DegbugPlot()
+SplitTriangleToThree(1,[600,100])
+DegbugPlot()
+SplitTriangleToThree(3,[900,200])
+DegbugPlot()
+SplitTriangleToThree(2,[100,200])
+DegbugPlot()
+SplitEdgeToTwo(1,5,[200,100])
+DegbugPlot()
+
+
 while getMaxError() > MaxError
     StepIdx = StepIdx + 1;
     disp(StepIdx)
     Step();
     if ToPlot
-        TriMesh = create3DMesh();
-        trisurf(TriMesh);
+        TriMesh3D = create3DMesh();
+        trisurf(TriMesh3D);
         drawnow;
     end
 end
-TriMesh = create3DMesh();
+TriMesh3D = create3DMesh();
+
+   
+
     function TriMesh3D = create3DMesh()
         Points = TriMesh.Points;
         ConMat = 1+reshape(this.triangles,3,[])';
         Points(:,end+1) = Raster(sub2ind(size(Raster), TriMesh.Points(:,2), TriMesh.Points(:,1)));
-        TriMesh3D = triangulation(TriMesh.ConList, Points);
+        TriMesh3D = triangulation(TriMesh.ConnectivityList, Points);
     end
+
     function TriMesh2D = create2DMesh()
-        TriMesh2D = triangulation(TriMesh.ConList, TriMesh.Points);
+        TriMesh2D = triangulation(TriMesh.ConnectivityList,TriMesh.Points);
     end
+    function DegbugPlot()        
+        triplot(triangulation(TriMesh.ConnectivityList,TriMesh.Points))
+        for TriIdx = 1:size(TriMesh.ConnectivityList,1)
+            Points = TriMesh.ConnectivityList(TriIdx,:);
+            PointsCoor = TriMesh.Points(Points,:);
+            text(mean(PointsCoor(:,1)), mean(PointsCoor(:,2)), ...
+                 num2str(TriIdx), 'HorizontalAlignment', 'center',...
+                'BackgroundColor', 'w')
+        end
+        for PointIdx = 1:size(TriMesh.Points,1)
+            text(TriMesh.Points(PointIdx,1), TriMesh.Points(PointIdx,2),...
+                ['(' num2str(PointIdx) ')'], 'HorizontalAlignment', 'center',...
+                'BackgroundColor', 'w', 'FontWeight', 'bold')
+        end
+        EdgesTable = ToTable(Edges);
+        for EdgeIdx = 1:size(EdgesTable,1)
+            PointsIdxs = [EdgesTable.P1(EdgeIdx), EdgesTable.P2(EdgeIdx)];
+            PointsCoor = TriMesh.Points(PointsIdxs,:);
+            if ~isnan(EdgesTable.T2(EdgeIdx))
+                text(mean(PointsCoor(:,1)), mean(PointsCoor(:,2)),...
+                    [num2str(EdgesTable.T1(EdgeIdx)) '-' num2str(EdgesTable.T2(EdgeIdx))],...
+                    'HorizontalAlignment', 'center', 'BackgroundColor', 'w')
+            else
+                text(mean(PointsCoor(:,1)), mean(PointsCoor(:,2)),...
+                    num2str(EdgesTable.T1(EdgeIdx)),...
+                    'HorizontalAlignment', 'center', 'BackgroundColor', 'w')
+            end
+        end
+        text
+    end
+
     function res = getMaxError()
         res = -this.queue.peek();
         res = res(1);
@@ -88,7 +134,7 @@ TriMesh = create3DMesh();
 
 % rasterize a triangle, find its max error, and queue it for processing
     function AddTriangleToQ(TriangleIdx)
-        PointIdxs = TriMesh.ConList(TriangleIdx, :);
+        PointIdxs = TriMesh.ConnectivityList(TriangleIdx, :);
         PointCoordinates = TriMesh.Points(PointIdxs, :);
         [Xs, Ys] = meshgrid(...
             floor(min(PointCoordinates(:,1))):ceil(max(PointCoordinates(:,1))),...
@@ -120,13 +166,13 @@ TriMesh = create3DMesh();
         T = this.queue.remove();
         TriangleIdx = T(2);
         
-        P1_Idx = TriMesh.ConList(TriangleIdx, 1);
-        P2_Idx = TriMesh.ConList(TriangleIdx, 2);
-        P3_Idx = TriMesh.ConList(TriangleIdx, 3);
+        P1 = TriMesh.ConnectivityList(TriangleIdx, 1);
+        P2 = TriMesh.ConnectivityList(TriangleIdx, 2);
+        P3 = TriMesh.ConnectivityList(TriangleIdx, 3);
         
-        P1_Coor = TriMesh.Points(P1_Idx, :);
-        P2_Coor = TriMesh.Points(P2_Idx, :);
-        P3_Coor = TriMesh.Points(P3_Idx, :);
+        P1_Coor = TriMesh.Points(P1, :);
+        P2_Coor = TriMesh.Points(P2, :);
+        P3_Coor = TriMesh.Points(P3, :);
         P_Coor = Meta.Candidates(TriangleIdx, 1:2);
         
         if IsColinear(P1_Coor, P2_Coor, P_Coor)
@@ -152,11 +198,11 @@ TriMesh = create3DMesh();
         end
     end
     
-    function EdgeIdx = GetEdgeIdx(TriangleIdx, PointA_Idx, PointB_Idx)
+    function EdgeIdx = GetEdgeIdx(TriangleIdx, PointA, PointB)
         TriangleEdges = TriMesh.TriangleEgdes(TriangleIdx, :);
         for EdgeIdxInTriangle = 1:3
             TempEdgeIdx = TriangleEdges(EdgeIdxInTriangle);
-            if all(sort(Edges.PointIdxs(TempEdgeIdx,:)) == sort([PointA_Idx, PointB_Idx]))
+            if all(sort(Edges.PointIdxs(TempEdgeIdx,:)) == sort([PointA, PointB]))
                 EdgeIdx = TempEdgeIdx;
                 return
             end
@@ -164,141 +210,128 @@ TriMesh = create3DMesh();
         error('Unexpected error')
     end
 
-    function NewTriangles = SplitTriangleToThree(ABC_Idx, P_Coor)
-        P_Idx = size(TriMesh.Points, 1) + 1;
-        TriMesh.Points(P_Idx,:) = P_Coor; 
+    function NewTriangles = SplitTriangleToThree(ABC, P_Coor)
+        P = size(TriMesh.Points, 1) + 1;
+        TriMesh.Points(P,:) = P_Coor; 
         
-        ABP_Idx = ABC_Idx;
-        BCP_Idx = size(TriMesh.ConList, 1) + 1;
-        CAP_Idx = size(TriMesh.ConList, 1) + 2;
-        A_Idx = TriMesh.ConList(ABC_Idx, 1);
-        B_Idx = TriMesh.ConList(ABC_Idx, 2);
-        C_Idx = TriMesh.ConList(ABC_Idx, 3);
+        ABP = ABC;
+        BCP = size(TriMesh.ConnectivityList, 1) + 1;
+        CAP = size(TriMesh.ConnectivityList, 1) + 2;
+        A = TriMesh.ConnectivityList(ABC, 1);
+        B = TriMesh.ConnectivityList(ABC, 2);
+        C = TriMesh.ConnectivityList(ABC, 3);
        
-        AB_Idx = GetEdgeIdx(ABC_Idx, A_Idx, B_Idx);
-        BC_Idx = GetEdgeIdx(ABC_Idx, B_Idx, C_Idx);
-        CA_Idx = GetEdgeIdx(ABC_Idx, A_Idx, C_Idx);
-
-        TriMesh.ConList(ABP_Idx, 3) = P_Idx;
-        TriMesh.ConList(BCP_Idx, :) = [B_Idx, C_Idx, P_Idx];
-        TriMesh.ConList(CAP_Idx, :) = [C_Idx, A_Idx, P_Idx];
-
-        Edges.TriangleIdxs(AB_Idx, Edges.TriangleIdxs(AB_Idx,:)==ABC_Idx) = ABP_Idx;
-        Edges.TriangleIdxs(BC_Idx, Edges.TriangleIdxs(BC_Idx,:)==ABC_Idx) = BCP_Idx;
-        Edges.TriangleIdxs(CA_Idx, Edges.TriangleIdxs(CA_Idx,:)==ABC_Idx) = CAP_Idx;
+        TriMesh.ConnectivityList(ABP, :) = [A, B, P];
+        TriMesh.ConnectivityList(BCP, :) = [B, C, P];
+        TriMesh.ConnectivityList(CAP, :) = [C, A, P];
         
-        EdgeAP = size(Edges.PointIdxs,1) + 1;
-        EdgeBP = size(Edges.PointIdxs,1) + 2;
-        EdgeCP = size(Edges.PointIdxs,1) + 3;
-        Edges.TriangleIdxs(EdgeAP, :) = [ABP_Idx, ABC_Idx];
-        Edges.TriangleIdxs(EdgeBP, :) = [BCP_Idx, ABC_Idx];
-        Edges.TriangleIdxs(EdgeCP, :) = [CAP_Idx, ABC_Idx];
-        Edges.PointIdxs(EdgeAP, :) = [A_Idx, P_Idx];
-        Edges.PointIdxs(EdgeBP, :) = [B_Idx, P_Idx];
-        Edges.PointIdxs(EdgeCP, :) = [C_Idx, P_Idx];
-        LegalizeEdge(AB_Idx)
-        LegalizeEdge(BC_Idx)
-        LegalizeEdge(CA_Idx)
-        NewTriangles = [ABP_Idx, BCP_Idx, CAP_Idx];
+        [T_Idxs] = Edges.GetEdge(A,B);
+        T_Idxs(T_Idxs==ABC) = ABP;
+        Edges.SetEdge(A,B,T_Idxs);
+        
+        [T_Idxs] = Edges.GetEdge(A,C);
+        T_Idxs(T_Idxs==ABC) = CAP;
+        Edges.SetEdge(A,C,T_Idxs);
+        
+        [T_Idxs] = Edges.GetEdge(B,C);
+        T_Idxs(T_Idxs==ABC) = BCP;
+        Edges.SetEdge(B,C,T_Idxs);
+        
+        Edges.SetEdge(A,P,[ABP, CAP]);
+        Edges.SetEdge(B,P,[ABP, BCP]);
+        Edges.SetEdge(C,P,[BCP, CAP]);
+        
+        LegalizeEdge(A,B)
+        LegalizeEdge(B,C)
+        LegalizeEdge(C,A)
+        NewTriangles = [ABP, BCP, CAP];
     end
 
-    function NewTriangles = SplitEdgeToTwo(EgdeIdx, NewPoint)
+    function NewTriangles = SplitEdgeToTwo(A, B, NewPointCoor)
         % NewPoint = [x,y]
         %           A                     A
         %          /||\                  /||\
         %         / || \                / || \
         %        /  ||  \              /  ||  \
         %       / T1||T2 \    Split   / T1||T2 \
-        %     P1\   ||   /P2   =>   P1\---B----/P2
+        %     P1\   ||   /P2   =>   P1\---C----/P2
         %        \  ||  /              \T3||T4/
         %     T1N \ || / T2N        T1N \ || / T2N
         %          \||/                  \||/
-        %           B                     C
+        %           B                     B
+        T_Idxs = Edges.GetEdge(A, B);
+        T1 = T_Idxs(1);
+        T2 = T_Idxs(2);
+        if ~IsColinear(TriMesh.Points(A,:),TriMesh.Points(B,:),NewPointCoor)
+            error('WHAT')
+        end
+        % Create a new point C
+        TriMesh.Points(end+1,:) = NewPointCoor;
+        C = size(TriMesh.Points,1);
         
-        AB_Idx = EgdeIdx;
-        T1_Idx = Edges.TriangleIdxs(AB_Idx, 1);
-        T2_Idx = Edges.TriangleIdxs(AB_Idx, 2);
-        A_Idx = Edges.PointIdxs(AB_Idx, 1);
-        B_Idx = Edges.PointIdxs(AB_Idx, 2);
+        Edges.ClearEdge(A, B);
         
-        % Create a new point (C) where B is now
-        TriMesh.Points(end+1,:) = TriMesh.Points(B_Idx,:);
-        C_Idx = size(TriMesh.Points,1);
+        % Create the new edge AC
+        Edges.SetEdge(A, C, [T1, T2]);
         
-        % Move B
-        TriMesh.Points(B_Idx,:) = NewPoint;
-        
-        % Create the new edge BC
-        Edges.PointIdxs(end+1,:) = [B_Idx, C_Idx];
-        BC_Idx = size(Edges.PointIdxs,1);
-        
-        if ~isnan(T1_Idx)
-            % Find P1, B-P1 Edge, T1N
-            P1_Idx = setdiff(TriMesh.ConList(T1_Idx,:), [A_Idx, B_Idx]);
-            AP1_Idx = GetEdgeIdx(T1, A_Idx, P1_Idx);
-            BP1_Idx = GetEdgeIdx(T1, B_Idx, P1_Idx);
-            T1N_Idx = setdiff(Edges.TriangleIdxs(BP1_Idx,:), T1);
+        if ~isnan(T1)
+            % Find P1, T1N
+            P1 = setdiff(TriMesh.ConnectivityList(T1,:), [A, B]);
+            T1N = setdiff(Edges.GetEdge(B, P1), T1);
+            
+            % Update T1
+            TriMesh.ConnectivityList(T1,:) = [P1, C, A];
             
             % Create new triangle
-            TriMesh.ConList(end+1,:) = [P1_Idx, B_Idx, C_Idx];
-            T3_Idx = size(TriMesh.ConList,1);
-           
-            % Update B-P1 Edge
-            Edges.TriangleIdxs(BP1_Idx, Edges.TriangleIdxs(BP1_Idx,:)==T1N_Idx) = T3_Idx;
+            T3 = size(TriMesh.ConnectivityList,1)+1;
+            TriMesh.ConnectivityList(T3,:) = [P1, B, C];
             
             % Create C-P1 Edge
-            Edges.TriangleIdxs(end+1, :) = [T3_Idx, T1N_Idx];
-            CP1_Idx = size(Edges.TriangleIdxs,1);
-            Edges.Points(CP1_Idx, :) = [C_Idx, P1_Idx];
+            Edges.SetEdge(C, P1, [T1, T3]);
             
-            % Update TriangleEgdes
-            TriMesh.TriangleEgdes(T1N_Idx, TriMesh.TriangleEgdes(T1N_Idx, :)==BP1_Idx) = CP1_Idx;
-            TriMesh.TriangleEgdes(T3_Idx, :) = [CP1_Idx, BP1_Idx, BC_Idx];
+            % Update B-P1 Edge
+            Edges.SetEdge(B, P1, [T1N T3]);
         else
-            T3_Idx = nan;
+            T3 = nan;
         end
-        if ~isnan(T2_Idx)
-            % Find P2, B-P2 Edge, T2N
-            P2_Idx = setdiff(TriMesh.ConList(T2_Idx,:), [A_Idx, B_Idx]);
-            AP2_Idx = GetEdgeIdx(T2, A_Idx, P2_Idx);
-            BP2_Idx = GetEdgeIdx(T2, B_Idx, P2_Idx);
-            T2N_Idx = setdiff(Edges.TriangleIdxs(BP2_Idx,:), T1);
+        if ~isnan(T2)
+            % Find P2, T2N
+            P2 = setdiff(TriMesh.ConnectivityList(T2,:), [A, B]);
+            T2N = setdiff(Edges.GetEdge(B, P2), T2);
+            
+            % Update T1
+            TriMesh.ConnectivityList(T2,:) = [P2, C, A];
             
             % Create new triangle
-            TriMesh.ConList(end+1,:) = [P2_Idx, B_Idx, C_Idx];
-            T4_Idx = size(TriMesh.ConList,1);
-           
+            T4 = size(TriMesh.ConnectivityList,1)+1;
+            TriMesh.ConnectivityList(T4,:) = [P2, B, C];
+            
+            % Create C-P1 Edge
+            Edges.SetEdge(C, P2, [T2, T4]);
+            
             % Update B-P2 Edge
-            Edges.TriangleIdxs(BP2_Idx, Edges.TriangleIdxs(BP2_Idx,:)==T2N_Idx) = T4_Idx;
-            
-            % Create C-P2 Edge
-            Edges.TriangleIdxs(end+1, :) = [T4_Idx, T2N_Idx];
-            CP2_Idx = size(Edges.TriangleIdxs,1);
-            Edges.Points(CP2_Idx, :) = [C_Idx, P2_Idx];
-            
-            % Update TriangleEgdes
-            TriMesh.TriangleEgdes(T2N_Idx, TriMesh.TriangleEgdes(T2N_Idx, :)==BP2_Idx) = CP2_Idx;
-            TriMesh.TriangleEgdes(T4_Idx, :) = [CP2_Idx, BP2_Idx, BC_Idx];
+            Edges.SetEdge(B, P2, [T2N T4]);
         else
-            T4_Idx = nan;
+            T4 = nan;
         end
         
         % Update B-C Edge
-        Edges.TriangleIdxs(BC_Idx, :) = [T3_Idx, T4_Idx];
-        NewTriangles = [T1_Idx, T2_Idx, T3_Idx, T4_Idx];
+        Edges.SetEdge(B, C, [T3, T4]);
+        
+        NewTriangles = [T1, T2, T3, T4];
         NewTriangles(isnan(NewTriangles)) = [];
         % Todo: legalize all edges
-        if ~isnan(T1_Idx)
-            LegalizeEdge(AP1_Idx)
-            LegalizeEdge(CP1_Idx)
+        if ~isnan(T1)
+            LegalizeEdge(A,P1)
+            LegalizeEdge(C,P1)
         end
-        if ~isnan(T2_Idx)
-            LegalizeEdge(AP2_Idx)
-            LegalizeEdge(CP2_Idx)
+        if ~isnan(T2)
+            LegalizeEdge(A,P2)
+            LegalizeEdge(C,P2)
         end
     end
 
-    function LegalizeEdge(EdgeIdx)
+    function LegalizeEdge(P1, P2)
         % if the pair of triangles doesn't satisfy the Delaunay condition
         % (p1 is inside the circumcircle of (p0, pl, pr)), flip them,
         % then do the same check/flip recursively for the new pair of triangles
@@ -420,7 +453,10 @@ TriMesh = create3DMesh();
 end
 
 function res = IsColinear(a, b, c)
-bc = b(:) - c(:);
-ac = a(:) - c(:);
-res = all(cross([bc;0], [ac;0]) == 0);
+ab = b(:) - a(:);
+ab_hat = ab./norm(ab);
+ac = c(:) - a(:);
+h = norm((eye(2)-ab_hat*ab_hat')*ac);
+res = h<1;
 end
+
