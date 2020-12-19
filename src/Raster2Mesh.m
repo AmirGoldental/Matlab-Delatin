@@ -16,6 +16,7 @@ end
 TriMesh.ConnectivityList = []; % PointIdxs = TriMesh.ConnectivityList(TriangleIdx, 1:3)
 TriMesh.Points = []; % PointCoordinates = TriMesh.Points(PointIdx, 1:2)
 Meta.Candidates = []; % PointCoordinates = Meta.Candidates(TriangleIdx, 1:2)
+Meta.Queue = PriorityQueue();
 Edges = EdgesClass();
 
 TriMesh.Points = ...
@@ -35,21 +36,35 @@ AddTriangleToQ(2);
 
 % refine the mesh until its maximum error gets below the given one
 StepIdx = 0;
-if ToPlot
-    Hndl = figure;
-    Hndl.Position = [560.6000 145 804.8000 439.2000];
-    subplot(1,2,1)
-    surf(Raster(1:10:end,1:10:end))
-    subplot(1,2,2)    
-end
-
+MaxErrors = [];
 while GetMaxError() > MaxError
     StepIdx = StepIdx + 1;
+    MaxErrors(end+1) = GetMaxError();
     disp(StepIdx)
     Step();
     if ToPlot
+        if ~exist('Hndl', 'var')
+            Hndl = figure;
+            Hndl.Position = [159 121.4000 970.4000 569.6000];
+            subplot(2,2,3)
+            surf(Raster(1:10:end,1:10:end))
+            title('Original Model, 0.5 Mil Points')
+        end
+        if ~ishandle(Hndl)
+            break
+        end
+        subplot(2,2,1)
+        plot(MaxErrors)
+        ylabel('Max Error')
+        xlabel('Step Number')
+        subplot(2,2,2)
+        plot(100*(1-(1:StepIdx)/numel(Raster)))
+        ylabel('Compression Efficiency %')
+        xlabel('Step Number')
+        subplot(2,2,4)
         TriMesh3D = Create3DMesh();
         trisurf(TriMesh3D);
+        title(['Mesh, ' num2str(StepIdx) ' Points'])
         drawnow;
     end
 end
@@ -98,7 +113,7 @@ TriMesh3D = Create3DMesh();
     end
 
     function res = GetMaxError()
-        res = -Meta.queue.peek();
+        res = -Meta.Queue.peek();
         res = res(1);
     end
 
@@ -126,13 +141,13 @@ TriMesh3D = Create3DMesh();
         Meta.rms(TriangleIdx) = rms;
         
         % add triangle to priority queue
-        Meta.queue.insert([-maxError, TriangleIdx, rms]);
+        Meta.Queue.insert([-maxError, TriangleIdx, rms]);
     end
 
 
     function Step()
         % pop triangle with highest error from priority queue and split it
-        T = Meta.queue.remove();
+        T = Meta.Queue.remove();
         TriangleIdx = T(2);
         
         P1 = TriMesh.ConnectivityList(TriangleIdx, 1);
@@ -145,13 +160,13 @@ TriMesh3D = Create3DMesh();
         P_Coor = Meta.Candidates(TriangleIdx, 1:2);
         
         if IsColinear(P1_Coor, P2_Coor, P_Coor)
-            Meta.queue.remove(setdiff(Edges.GetEdge(P1, P2), TriangleIdx));
+            Meta.Queue.remove(setdiff(Edges.GetEdge(P1, P2), TriangleIdx));
             NewTriangles = SplitEdgeToTwo(P1, P2, P_Coor);
         elseif IsColinear(P2_Coor, P3_Coor, P_Coor)
-            Meta.queue.remove(setdiff(Edges.GetEdge(P3, P2), TriangleIdx));
+            Meta.Queue.remove(setdiff(Edges.GetEdge(P3, P2), TriangleIdx));
             NewTriangles = SplitEdgeToTwo(P3, P2, P_Coor);           
         elseif IsColinear(P3_Coor, P1_Coor, P_Coor)
-            Meta.queue.remove(setdiff(Edges.GetEdge(P1, P3), TriangleIdx));
+            Meta.Queue.remove(setdiff(Edges.GetEdge(P1, P3), TriangleIdx));
             NewTriangles = SplitEdgeToTwo(P1, P3, P_Coor);
         else
             NewTriangles = SplitTriangleToThree(TriangleIdx, P_Coor);
@@ -325,8 +340,8 @@ TriMesh3D = Create3DMesh();
         T_Idxs(T_Idxs==T2) = T1;
         Edges.SetEdge(R,P1,T_Idxs);
         
-        Meta.queue.remove(T1);
-        Meta.queue.remove(T2);
+        Meta.Queue.remove(T1);
+        Meta.Queue.remove(T2);
         
         AddTriangleToQ(T1);
         AddTriangleToQ(T2);
